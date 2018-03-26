@@ -25,7 +25,10 @@
 #
 #######################################################################
 # DONE PRIO 1: AFTER(!) SAP HANA SPS12 is available we could use hdbnsutil --sr_stateConfiguration
-SAPHanaTopologyVersion="0.161.4"
+SAPHanaTopologyVersion="0.170.2"
+
+OCF_RESKEY_STANDALONE=yes
+STANDALONE=yes
 #
 # Initialization:
 timeB=$(date '+%s')
@@ -252,8 +255,10 @@ function set_hana_attribute()
         super_ocf_log debug "DBG: SET attribute $attr_name for node ${attr_node} to ${attr_value} former ($attr_old) get_rc=$get_rc "
         case "$attr_store" in
             reboot | forever )
+                super_ocf_log err "crm_attribute -N $attr_node -v $attr_value -n $attr_name -l $attr_store"
                 echo "$dstr: SAPHanaTopology: crm_attribute -N $attr_node -v $attr_value -n \"$attr_name\" -l $attr_store" >> $log_attr_file
                 crm_attribute -N $attr_node -v $attr_value -n "$attr_name" -l $attr_store 2>>$log_attr_file; rc=$?
+                super_ocf_log err "crm_attribute rc=$rc"
                 ;;
             props )
                 echo "$dstr: SAPHanaTopology: crm_attribute -v $attr_value -n \"$attr_name\" -t crm_config -s SAPHanaSR" >> $log_attr_file
@@ -480,28 +485,35 @@ function sht_init() {
     esac
     #### SAP-CALL
     # hdbnsutil was a bit unstable in some tests so we recall the tool, if it fails to report the srmode
-    for i in  1 2 3; do
-        hdbANSWER=$(HANA_CALL --timeout $HANA_CALL_TIMEOUT --cmd "hdbnsutil -sr_stateConfiguration --sapcontrol=1" 2>/dev/null); RC_hdbnsutil=$?
-        super_ocf_log debug "DBG: hdbANSWER=$hdbANSWER"
-        srmode=$(echo "$hdbANSWER" | awk -F= '$1 == "mode" {print $2}')
-        case "$srmode" in
-            primary | syncmem | sync | async | none )
-              # we can leave the loop as we already got a result
-              break
-              ;;
-            * )
-              # lets pause a bit to give hdbnsutil a chance to answer next time
-              sleep 20
-              ;;
-        esac
-    done
-    # TODO PRIO3: Implement a file lookup, if we did not get a result
-    siteID=$(echo "$hdbANSWER" | awk -F= '/site id/ {print $2}')
-    siteNAME=$(echo "$hdbANSWER" | awk -F= '/site name/ {print $2}')
-    site=$siteNAME
-    srmode=$(echo "$hdbANSWER" | awk -F= '/mode/ {print $2}')
-    MAPPING=$(echo "$hdbANSWER" | awk -F[=/] '$1 == "mapping" && $2 == myhost && $3 != site { print $4 }' site=$site myhost=$HOSTNAME)
-    super_ocf_log debug "DBG: site=$site, mode=$srmode, MAPPING=$MAPPING"
+    if ocf_is_true $STANDALONE; then
+        srmode=none 
+        siteID="0"
+        siteName="NoSR"
+        site=$siteName
+    else
+        for i in  1 2 3; do
+            hdbANSWER=$(HANA_CALL --timeout $HANA_CALL_TIMEOUT --cmd "hdbnsutil -sr_stateConfiguration --sapcontrol=1" 2>/dev/null); RC_hdbnsutil=$?
+            super_ocf_log debug "DBG: hdbANSWER=$hdbANSWER"
+            srmode=$(echo "$hdbANSWER" | awk -F= '$1 == "mode" {print $2}')
+            case "$srmode" in
+                primary | syncmem | sync | async | none )
+                  # we can leave the loop as we already got a result
+                  break
+                  ;;
+                * )
+                  # lets pause a bit to give hdbnsutil a chance to answer next time
+                  sleep 20
+                  ;;
+            esac
+        done
+        # TODO PRIO3: Implement a file lookup, if we did not get a result
+        siteID=$(echo "$hdbANSWER" | awk -F= '/site id/ {print $2}')
+        siteNAME=$(echo "$hdbANSWER" | awk -F= '/site name/ {print $2}')
+        site=$siteNAME
+        srmode=$(echo "$hdbANSWER" | awk -F= '/mode/ {print $2}')
+        MAPPING=$(echo "$hdbANSWER" | awk -F[=/] '$1 == "mapping" && $2 == myhost && $3 != site { print $4 }' site=$site myhost=$HOSTNAME)
+        super_ocf_log debug "DBG: site=$site, mode=$srmode, MAPPING=$MAPPING"
+    fi
     #
     # filter all non-cluster mappings
     #
@@ -525,6 +537,9 @@ function check_for_primary() {
     super_ocf_log info "FLOW $FUNCNAME ($*)"
     local rc=0
     node_status=$srmode
+    if ocf_is_true $STANDALONE; then
+       return $HANA_STATE_STANDALONE
+    fi
     super_ocf_log debug "DBG: check_for_primary: node_status=$node_status"
     super_ocf_log debug "DBG: check_for_primary: node_status=$node_status"
     for i in  1 2 3; do
@@ -665,7 +680,7 @@ function master_walk() {
    # 4:P:slave:slave:worker:slave      KOELN
    super_ocf_log debug "DBG: master walk"
    case "$srmode" in
-      primary | sync | syncmem | async )
+      primary | sync | syncmem | async | none )
           # walk over all known cluster nodes
           super_ocf_log debug "DBG: master walk for $srmode"
           for node in $(crm_node  -l | awk '{print $2}'); do
@@ -729,6 +744,7 @@ function master_walk() {
 #
 function sht_monitor() {
   super_ocf_log info "FLOW $FUNCNAME ($*)"
+  super_ocf_log err "FLOW $FUNCNAME ($*)"
   local rc=0
 
   master_walk
@@ -831,6 +847,7 @@ function sht_stop_clone() {
 #
 function sht_monitor_clone() {
     super_ocf_log info "FLOW $FUNCNAME ($*)"
+    super_ocf_log err "FLOW $FUNCNAME ($*)"
     #
 	local rc=$OCF_ERR_GENERIC
 	local promoted=0
@@ -906,11 +923,13 @@ function sht_monitor_clone() {
             $1 == "indexServerConfigRole" {isCR=$2}
             $1 == "indexServerActualRole" {isAR=$2}
             END { printf "%s:%s:%s:%s\n", nsCR, nsAR, isCR, isAR;  } ' vName=$vName )
+    super_ocf_log error "set_hana_attribute ${NODENAME} $hanarole ${ATTR_NAME_HANA_ROLES[@]}"
     set_hana_attribute ${NODENAME} "$hanarole" ${ATTR_NAME_HANA_ROLES[@]}
 
     # TODO PRIO2: COULD/SHOULD WE LIMIT THE SET OF THE LSS/SRR ATTRIBUTE TO ONLY THE_MASTER nodes?
     # ignore timeout (124) and "ignore" (5) as returncode from the landscapeHostConfiguration call
     super_ocf_log info "DEC: site=$site; hanalrc=$hanalrc"
+    super_ocf_log err "DEC: site=$site; hanalrc=$hanalrc"
     if [ -n "$site" -a "$hanalrc" != "124" ]; then
         ATTR=(${ATTR_NAME_HANA_LSS[@]}); ATTR[0]="${ATTR[0]}_$site"
         set_hana_attribute "X" "$hanalrc" ${ATTR[@]}

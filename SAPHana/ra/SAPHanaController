@@ -11,7 +11,7 @@
 # Support:      linux@sap.com
 # License:      GNU General Public License (GPL)
 # Copyright:    (c) 2013,2014 SUSE Linux Products GmbH
-# Copyright:    (c) 2015-2016 SUSE Linux GmbH
+# Copyright:    (c) 2015-2017 SUSE Linux GmbH
 #
 # An example usage:
 #      See usage() function below for more details...
@@ -33,7 +33,10 @@
 #     systemReplicationStatus.py (>= SPS090)
 #
 #######################################################################
-SAPHanaControllerVersion="0.161.5"
+SAPHanaControllerVersion="0.170.0"
+
+OCF_RESKEY_STANDALONE=yes
+STANDALONE=yes
 #
 # Initialization:
 timeB=$(date '+%s')
@@ -482,6 +485,7 @@ function assert() {
 function set_crm_master()
 {
     super_ocf_log info "FLOW $FUNCNAME ($*)"
+    super_ocf_log err "FLOW $FUNCNAME ($*)"
     local rc=0
     local score=0
     local node=""
@@ -739,6 +743,16 @@ function saphana_init() {
        "[0-9]*:S:[^:]*:*:              .*    -INFINITY"
        ".*                             .*    -INFINITY"
     )
+    SCORING_TABLE_PREFERRED_NOSR=(
+       "[234]:[PN]:master[123]:master     .*          151"
+       "[234]:[PN]:master[123]:slave      .*          111"
+       "[015]:[PN]:master[123]:           .*           71"
+       "[0-9]:[PN]:master[123]:*:standby  .*           61"
+       "[0-9]:[PN]:slave:                 .*       -10001"
+       "[0-9]*:S:[^:]*:*:              SNA   -90010"
+       "[0-9]*:S:[^:]*:*:              .*    -90011"
+       ".*                             .*    -90012"
+    )
     SCORING_TABLE_PREFERRED_AGGRESSIVE=(
        "[34]:P:master[123]:master     .*          150"
        "[2]:P:master[123]:master     .*            50"
@@ -762,6 +776,9 @@ function saphana_init() {
         SCORING_TABLE=("${SCORING_TABLE_PREFERRED_SITE_TAKEOVER[@]}")
     else
         case "$PreferSiteTakeover" in
+            nosr|NOSR|NoSR )
+                SCORING_TABLE=("${SCORING_TABLE_PREFERRED_NOSR[@]}")
+                ;;
             never|NEVER|Never )
                 SCORING_TABLE=("${SCORING_TABLE_PREFERRED_NEVER[@]}")
                 ;;
@@ -964,33 +981,37 @@ function cleanup_instance() {
 function check_for_primary() {
     super_ocf_log info "FLOW $FUNCNAME ($*)"
     local rc=$HANA_STATE_DEFECT
-    node_full_status=$(HANA_CALL --timeout $HANA_CALL_TIMEOUT --cmd "hdbnsutil -sr_stateConfiguration --sapcontrol=1" 2>/dev/null )
-    node_status=$(echo "$node_full_status" | awk -F= '$1=="mode" {print $2}')
-    super_ocf_log debug "DBG: check_for_primary: node_status=$node_status"
-    # TODO: PRIO2: Maybe we need to use a fallback interface when hdbnsitil does not answer properly -> lookup in config files?
-    #              This might also solve some problems when we could not figure-out the ilocal or remote site name
-    for i in  1 2 3; do
-       case "$node_status" in
-           primary )
-               super_ocf_log info "FLOW: $FUNCNAME rc=HANA_STATE_PRIMARY"
-               return $HANA_STATE_PRIMARY;;
-           syncmem | sync | async )
-               super_ocf_log info "FLOW: $FUNCNAME rc=HANA_STATE_SECONDARY"
-               return $HANA_STATE_SECONDARY;;
-           none ) # have seen that mode on second side BEFEORE we registered it as replica
-               super_ocf_log info "FLOW: $FUNCNAME rc=HANA_STATE_STANDALONE"
-               return $HANA_STATE_STANDALONE;;
-           * )
-               super_ocf_log err "ACT: check_for_primary:  we didn't expect node_status to be: <$node_status>"
-               dump=$( echo $node_status | hexdump -C );
-               super_ocf_log err "ACT: check_for_primary:  we didn't expect node_status to be: DUMP <$dump>"
-               node_full_status=$(HANA_CALL --timeout $HANA_CALL_TIMEOUT --cmd "hdbnsutil -sr_stateConfiguration --sapcontrol=1" 2>/dev/null )
-               node_status=$(echo "$node_full_status" | awk -F= '$1=="mode" {print $2}')
-               super_ocf_log debug "DEC: check_for_primary: loop=$i: node_status=$node_status"
-               # TODO: PRIO1: Maybe we need to keep the old value for P/S/N, if hdbnsutil just crashes
-       esac;
-       sleep 20
-    done
+    if ocf_is_true $STANDALONE; then
+        return $HANA_STATE_STANDALONE
+    else
+        node_full_status=$(HANA_CALL --timeout $HANA_CALL_TIMEOUT --cmd "hdbnsutil -sr_stateConfiguration --sapcontrol=1" 2>/dev/null )
+        node_status=$(echo "$node_full_status" | awk -F= '$1=="mode" {print $2}')
+        super_ocf_log debug "DBG: check_for_primary: node_status=$node_status"
+        # TODO: PRIO2: Maybe we need to use a fallback interface when hdbnsitil does not answer properly -> lookup in config files?
+        #              This might also solve some problems when we could not figure-out the ilocal or remote site name
+        for i in  1 2 3; do
+           case "$node_status" in
+               primary )
+                   super_ocf_log info "FLOW: $FUNCNAME rc=HANA_STATE_PRIMARY"
+                   return $HANA_STATE_PRIMARY;;
+               syncmem | sync | async )
+                   super_ocf_log info "FLOW: $FUNCNAME rc=HANA_STATE_SECONDARY"
+                   return $HANA_STATE_SECONDARY;;
+               none ) # have seen that mode on second side BEFEORE we registered it as replica
+                   super_ocf_log info "FLOW: $FUNCNAME rc=HANA_STATE_STANDALONE"
+                   return $HANA_STATE_STANDALONE;;
+               * )
+                   super_ocf_log err "ACT: check_for_primary:  we didn't expect node_status to be: <$node_status>"
+                   dump=$( echo $node_status | hexdump -C );
+                   super_ocf_log err "ACT: check_for_primary:  we didn't expect node_status to be: DUMP <$dump>"
+                   node_full_status=$(HANA_CALL --timeout $HANA_CALL_TIMEOUT --cmd "hdbnsutil -sr_stateConfiguration --sapcontrol=1" 2>/dev/null )
+                   node_status=$(echo "$node_full_status" | awk -F= '$1=="mode" {print $2}')
+                   super_ocf_log debug "DEC: check_for_primary: loop=$i: node_status=$node_status"
+                   # TODO: PRIO1: Maybe we need to keep the old value for P/S/N, if hdbnsutil just crashes
+           esac;
+           sleep 20
+        done
+    fi
     super_ocf_log info "FLOW $FUNCNAME rc=$rc"
     return $rc
 }
@@ -1794,6 +1815,9 @@ function lpa_check_lpt_status() {
     local delta=0
     local remSn_name=""
     local remHost=""
+    if ocf_is_true $STANDALONE; then
+        return 0
+    fi
     #
     # First GET LPT from ATTR-FILE-DEFAULT
     #
@@ -2052,6 +2076,9 @@ function saphana_start_clone() {
             if [ $primary_status -eq $HANA_STATE_PRIMARY ]; then
                 set_hana_attribute ${NODENAME} "DEMOTED" ${ATTR_NAME_HANA_CLONE_STATE[@]}
                 saphana_start_primary $lss; rc=$?
+            elif ocf_is_true $STANDALONE; then
+                set_hana_attribute ${NODENAME} "DEMOTED" ${ATTR_NAME_HANA_CLONE_STATE[@]}
+                saphana_start_primary $lss; rc=$?
             else
                 set_hana_attribute ${NODENAME} "DEMOTED" ${ATTR_NAME_HANA_CLONE_STATE[@]}
                 super_ocf_log debug "DBG: 007 * lpa_set_lpt 10 $sr_name"
@@ -2162,8 +2189,10 @@ function saphana_monitor_primary()
                     lpa_set_lpt $LPTloc "$sr_name"
                 fi
                 lpa_check_lpt_status; lparc=$?
+                super_ocf_log err "lpa_check_lpt_status rc=$lparc"
                 # TODO: PRIO1: Need to differ lpa_check_lpt_status return codes
                 if [ $lparc -lt 2 ]; then
+                    super_ocf_log err "lpa_check_lpt_status rc=$lparc == lt 2"
                     # lpa - no need to wait any longer - lets try a new start
                     saphana_start_clone
                     rc=$?
@@ -2567,6 +2596,8 @@ function saphana_monitor_clone() {
             saphana_monitor_primary; rc=$?
         elif [ $primary_status -eq $HANA_STATE_SECONDARY  ]; then
             saphana_monitor_secondary; rc=$?
+        elif ocf_is_true $STANDALONE; then
+            saphana_monitor_primary; rc=$?
         else
             #
             # OK, we are neither HANA PRIMARY nor HANA SECONDARY
