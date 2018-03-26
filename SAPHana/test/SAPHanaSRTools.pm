@@ -677,23 +677,23 @@ sub OLD_host_attr2string()
 sub print_attr_host()
 {
     my ($HKey, $AKey);
-	printf "%-22s", "Attribute \\ Host";
-	foreach $HKey (sort keys %Host) {
-	   printf "%-16s ", $HKey;
-	}
-	printf "\n";
+    printf "%-22s", "Attribute \\ Host";
+    foreach $HKey (sort keys %Host) {
+       printf "%-16s ", $HKey;
+    }
+    printf "\n";
 
-	printf "%s\n", "-" x 120 ;
+    printf "%s\n", "-" x 120 ;
 
-	foreach $AKey (sort keys %HName) {
-	   printf "%-22s", $AKey;
-	   foreach $HKey (sort keys %Host) {
-		   printf "%-16.16s ", $Host{$HKey} -> {$AKey};
-		}
+    foreach $AKey (sort keys %HName) {
+       printf "%-22s", $AKey;
+       foreach $HKey (sort keys %Host) {
+           printf "%-16.16s ", $Host{$HKey} -> {$AKey};
+        }
 
-	   printf "\n";
-	}
-	return 0;
+       printf "\n";
+    }
+    return 0;
 }
 
 sub host_attr2string($$$$)

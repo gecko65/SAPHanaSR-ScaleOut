@@ -36,12 +36,12 @@ my $cibFile="";
 
 sub init()
 {
-	my $result = GetOptions ("sid=s" => \@sids,
-	                      "sort=s" => \$sortBy,
-	                      "cib=s" => \$cibFile,
+    my $result = GetOptions ("sid=s" => \@sids,
+                          "sort=s" => \$sortBy,
+                          "cib=s" => \$cibFile,
                           "version" => \$version,
                           "help" => \$help,
-		 );
+        );
    return 0;
 }
 
@@ -83,8 +83,8 @@ foreach $sid (@sids) {
     if ( keys(%Host) == 0 ) {
         printf "No attributes found for SID=%s\n", $sid;
     } else {
-	    print_host_attr(\%Global, \%GName, "Global", "");
-	    print_host_attr(\%Site,   \%SName, "Sites",  "");
+        print_host_attr(\%Global, \%GName, "Global", "");
+        print_host_attr(\%Site,   \%SName, "Sites",  "");
         print_host_attr(\%Host,   \%HName, "Hosts",  $sortBy);
     }
 }
