@@ -61,13 +61,6 @@ if ( $cibFile ne "" ) {
    set_cibFile($cibFile);
 }
 
-
-sub max { # thanks to http://www.perlunity.de/perl/forum/thread_018329.shtml
- my $a = shift;
- my $b = shift;
- return $a > $b ? $a : $b;
-}
-
 if ( 0 == @sids ) {
     my $sid_ino_list;
        ( $sid_ino_list ) = get_sid_and_InstNr();
