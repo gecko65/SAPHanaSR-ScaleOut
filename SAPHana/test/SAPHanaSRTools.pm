@@ -83,7 +83,6 @@ sub get_nodes_online
 {
     my $result=0;
     my $sid=shift;
-    my $result="";
     foreach my $h ( keys(%{$$refHName{node_state}}) ) {
         if ( get_node_status($h) eq "online" ) {
            $result++;
@@ -148,7 +147,7 @@ sub get_sid_and_InstNr()
 #          $sid=tolower("$1");
 #          $Inr=$2;
     }
-    close ListInstances;
+    close $ListInstances;
     #printf (" get_sid_and_InstNr: return (%s)\n", join(",", ( $sid, $Inr, $noDAACount, $gotAnswer )));
     $sid=join(",", @sid_ino);
     return ( $sid, $noDAACount, $gotAnswer );
@@ -303,7 +302,7 @@ while (<$CIB>) {
    }
    }
 }
-close CIB;
+close $CIB;
     return 0;
 }
 
